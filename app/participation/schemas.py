@@ -16,6 +16,8 @@ class QuestionCreate(BaseModel):
     prompt: str
     correct_answer: Optional[str] = None
     options: List[OptionCreate] = []
+    # False saves a draft that can be launched later.
+    launch: bool = True
 
     @model_validator(mode="after")
     def check_question_shape(self):
@@ -35,6 +37,7 @@ class OptionOutLecturer(BaseModel):
     id: int
     text: str
     is_correct: bool
+    response_count: int = 0
 
     class Config:
         from_attributes = True

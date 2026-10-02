@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -9,6 +11,9 @@ from app.auth.models import Role, Profile
 from app.classes.models import ClassSession
 from app.attendance.models import AttendanceRecord, AttendanceStatus
 from app.participation import models, schemas
+from app.campus.service import notify
+from app.classes.service import ensure_can_view
+from app.courses.service import course_students
 
 router = APIRouter(prefix="/participation", tags=["participation"])
 
@@ -33,19 +38,66 @@ def create_question(
     if session.ended_at is not None:
         raise HTTPException(status_code=400, detail="Session has ended")
 
+    if payload.launch:
+        _close_open_questions(db, session_id)
     question = models.Question(
         session_id=session_id,
         question_type=payload.question_type,
         prompt=payload.prompt,
         correct_answer=payload.correct_answer,
+        is_open=payload.launch,
         options=[
             models.QuestionOption(text=option.text, is_correct=option.is_correct)
             for option in payload.options
         ],
     )
     db.add(question)
+    if payload.launch:
+        _announce_question(db, session, payload.prompt)
     db.commit()
     db.refresh(question)
+    return question
+
+
+def _close_open_questions(db: Session, session_id: int) -> None:
+    """Only one question is live at a time."""
+    db.query(models.Question).filter(
+        models.Question.session_id == session_id, models.Question.is_open == True  # noqa: E712
+    ).update({"is_open": False})
+
+
+def _announce_question(db: Session, session: ClassSession, prompt: str) -> None:
+    if session.started_at is None:
+        return
+    notify(
+        db,
+        [s.id for s in course_students(db, session.course)],
+        f"Live question in {session.course.code}",
+        prompt[:140],
+        type="live_question",
+        reference_id=str(session.id),
+        action_label="Answer",
+    )
+
+
+@router.post("/questions/{question_id}/launch", response_model=schemas.QuestionOutLecturer)
+def launch_question(
+    question_id: int,
+    db: Session = Depends(get_db),
+    lecturer: Profile = Depends(require_role(Role.lecturer)),
+):
+    question = db.query(models.Question).filter(models.Question.id == question_id).first()
+    if question is None:
+        raise HTTPException(status_code=404, detail="Question not found")
+    session = get_owned_session(question.session_id, lecturer, db)
+    if session.ended_at is not None:
+        raise HTTPException(status_code=400, detail="Session has ended")
+    if not question.is_open:
+        _close_open_questions(db, session.id)
+        question.is_open = True
+        _announce_question(db, session, question.prompt)
+        db.commit()
+        db.refresh(question)
     return question
 
 
@@ -78,6 +130,7 @@ def list_open_questions(
     session = db.query(ClassSession).filter(ClassSession.id == session_id).first()
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    ensure_can_view(db, session, _user)
 
     query = (
         db.query(models.Question)
@@ -183,3 +236,19 @@ def close_question(
     db.commit()
     db.refresh(question)
     return question
+
+@router.get("/questions/{question_id}/responses/me", response_model=Optional[schemas.ResponseOut])
+def my_response(
+    question_id: int,
+    db: Session = Depends(get_db),
+    student: Profile = Depends(require_role(Role.student)),
+):
+    """The caller's answer to a question, or null when not answered yet."""
+    return (
+        db.query(models.QuestionResponse)
+        .filter(
+            models.QuestionResponse.question_id == question_id,
+            models.QuestionResponse.profile_id == student.id,
+        )
+        .first()
+    )

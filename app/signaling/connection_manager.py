@@ -1,10 +1,29 @@
 from fastapi import WebSocket
 
+from app.signaling.whiteboard import Whiteboard
+
 
 class ConnectionManager:
     def __init__(self) -> None:
         # session_id -> { profile_id: WebSocket }
         self.rooms: dict[int, dict[int, WebSocket]] = {}
+        # session_id -> profile ids with a raised hand
+        self.hands: dict[int, set[int]] = {}
+        # session_id -> lecturer's whiteboard (kept while the class runs)
+        self.boards: dict[int, Whiteboard] = {}
+
+    def board(self, session_id: int) -> Whiteboard:
+        return self.boards.setdefault(session_id, Whiteboard())
+
+    def set_hand(self, session_id: int, peer_id: int, raised: bool) -> None:
+        hands = self.hands.setdefault(session_id, set())
+        if raised:
+            hands.add(peer_id)
+        else:
+            hands.discard(peer_id)
+
+    def hand_raised(self, session_id: int, peer_id: int) -> bool:
+        return peer_id in self.hands.get(session_id, set())
 
     async def connect(self, session_id: int, peer_id: int, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -22,8 +41,10 @@ class ConnectionManager:
         if room is None or room.get(peer_id) is not websocket:
             return False
         del room[peer_id]
+        self.set_hand(session_id, peer_id, False)
         if not room:
             del self.rooms[session_id]
+            self.hands.pop(session_id, None)
         return True
 
     def peers(self, session_id: int) -> list[int]:
@@ -45,6 +66,7 @@ class ConnectionManager:
                 await self.send_to(session_id, peer_id, message)
 
     async def close_room(self, session_id: int, message: dict | None = None) -> None:
+        self.boards.pop(session_id, None)
         for peer_id, websocket in list(self.rooms.get(session_id, {}).items()):
             if message is not None:
                 try:

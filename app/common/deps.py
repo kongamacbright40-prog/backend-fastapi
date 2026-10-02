@@ -27,12 +27,13 @@ def get_current_user(
 
     if payload.get("type") != "access":
         raise credentials_exception
-    user_id = payload.get("sub")
-    if user_id is None:
+    try:
+        user_id = int(payload.get("sub"))
+    except (TypeError, ValueError):
         raise credentials_exception
 
-    user = db.query(Profile).filter(Profile.id == int(user_id)).first()
-    if user is None:
+    user = db.query(Profile).filter(Profile.id == user_id).first()
+    if user is None or not user.is_active:
         raise credentials_exception
     return user
 

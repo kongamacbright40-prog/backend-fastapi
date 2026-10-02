@@ -39,6 +39,15 @@ class QuestionOption(Base):
     is_correct = Column(Boolean, nullable=False, default=False)
 
     question = relationship("Question", back_populates="options")
+    responses = relationship(
+        "QuestionResponse",
+        foreign_keys="QuestionResponse.selected_option_id",
+        viewonly=True,
+    )
+
+    @property
+    def response_count(self) -> int:
+        return len(self.responses)
 
 
 class QuestionResponse(Base):
