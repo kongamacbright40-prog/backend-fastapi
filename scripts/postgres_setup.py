@@ -79,6 +79,20 @@ def create_role_and_database(args, superuser_password: str, app_password: str) -
         conn.close()
 
 
+def stamp_latest_migration(url: str) -> None:
+    """Records that the tables match the newest Alembic migration (they were
+    just created from the same models), like `alembic stamp head`."""
+    from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
+    head = script.get_current_head()
+    with create_engine(url).begin() as conn:
+        MigrationContext.configure(conn).stamp(script, head)
+    print(f"- Marked the database as migrated (Alembic revision {head})")
+
+
 def write_env(env_path: Path, url: str) -> None:
     lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
     kept = [line for line in lines if not line.strip().startswith("DATABASE_URL=")]
@@ -188,6 +202,7 @@ def main() -> None:
         for name, count in copied.items():
             if count:
                 print(f"    {name}: {count}")
+    stamp_latest_migration(url)
     write_env(Path(args.env_file), url)
     print("Done. Restart the backend (uvicorn) to use PostgreSQL.")
 

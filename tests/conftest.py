@@ -8,6 +8,8 @@ import pytest
 # is wiped at the start of the run.
 _DB_DIR = tempfile.mkdtemp(prefix="smart_class_tests_")
 os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL") or f"sqlite:///{_DB_DIR}/test.db"
+os.environ["JWT_SECRET_KEY"] = "test-secret-key-that-is-long-enough-for-hs256-0123456789"
+os.environ["CORS_ORIGINS"] = "https://smartclass.example.edu, https://admin.example.edu/"
 
 from fastapi.testclient import TestClient  # noqa: E402
 

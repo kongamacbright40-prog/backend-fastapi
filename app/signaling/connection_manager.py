@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import WebSocket
 
 from app.signaling.whiteboard import Whiteboard
@@ -11,6 +13,8 @@ class ConnectionManager:
         self.hands: dict[int, set[int]] = {}
         # session_id -> lecturer's whiteboard (kept while the class runs)
         self.boards: dict[int, Whiteboard] = {}
+        # session_id -> when the last person left (room empty since then)
+        self.emptied_at: dict[int, datetime] = {}
 
     def board(self, session_id: int) -> Whiteboard:
         return self.boards.setdefault(session_id, Whiteboard())
@@ -28,6 +32,7 @@ class ConnectionManager:
     async def connect(self, session_id: int, peer_id: int, websocket: WebSocket) -> None:
         await websocket.accept()
         room = self.rooms.setdefault(session_id, {})
+        self.emptied_at.pop(session_id, None)
         old = room.get(peer_id)
         room[peer_id] = websocket
         if old is not None:
@@ -45,6 +50,7 @@ class ConnectionManager:
         if not room:
             del self.rooms[session_id]
             self.hands.pop(session_id, None)
+            self.emptied_at[session_id] = datetime.utcnow()
         return True
 
     def peers(self, session_id: int) -> list[int]:
@@ -67,6 +73,7 @@ class ConnectionManager:
 
     async def close_room(self, session_id: int, message: dict | None = None) -> None:
         self.boards.pop(session_id, None)
+        self.emptied_at.pop(session_id, None)
         for peer_id, websocket in list(self.rooms.get(session_id, {}).items()):
             if message is not None:
                 try:

@@ -526,11 +526,16 @@ def test_whiteboard_is_relayed_to_students_and_replayed_to_late_joiners(client, 
             lws.send_json({"type": "board", "op": "begin", "id": "s2", "color": 1, "width": 0.02, "points": [[0.9, 0.9]]})
             assert sws.receive_json()["id"] == "s2"
 
-        # A student joining later gets the whole board.
+            # Screen share on/off is announced to the class.
+            lws.send_json({"type": "board", "op": "screen", "on": True})
+            assert sws.receive_json() == {"type": "board", "op": "screen", "on": True}
+
+        # A student joining later gets the whole board (and the share state).
         with client.websocket_connect(f"/ws/signal/{sid}?token={student_token}") as late:
             assert late.receive_json()["type"] == "room_state"
             state = late.receive_json()
             assert state["type"] == "board_state" and state["active"] is True
+            assert state["screen_on"] is True
             assert [s["id"] for s in state["strokes"]] == ["s1", "s2"]
             assert state["strokes"][0]["points"] == [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]
 
@@ -559,3 +564,50 @@ def test_auto_join_leave_recording_can_be_turned_off(client, world):
         assert records == []
     finally:
         client.put("/settings/system", json={**body, "auto_join_leave_recording": True}, headers=admin)
+
+
+def test_class_everyone_left_is_ended_after_15_minutes(client, world):
+    from datetime import datetime, timedelta
+
+    from app.signaling.connection_manager import manager
+
+    admin, lecturer = world["admin"], world["lecturer"]
+    course = client.post(
+        "/courses",
+        json={"code": "ABAND-1", "title": "Abandoned", "department_id": world["dept"]["id"]},
+        headers=admin,
+    ).json()
+    sid = client.post("/classes", json={"course_id": course["id"], "title": "Left open"}, headers=lecturer).json()["id"]
+    token = lecturer["Authorization"].split()[1]
+    with client.websocket_connect(f"/ws/signal/{sid}?token={token}") as ws:
+        assert ws.receive_json()["type"] == "room_state"
+
+    # Lecturer just left: the class is still live (they may come back).
+    assert sid in manager.emptied_at
+    live = [s["id"] for s in client.get("/admin/sessions?live_only=true", headers=admin).json()["items"]]
+    assert sid in live
+
+    left = datetime.utcnow() - timedelta(minutes=20)
+    from app.classes.models import ClassSession
+    from app.database import SessionLocal
+
+    with SessionLocal() as db:
+        db.get(ClassSession, sid).started_at = datetime.utcnow() - timedelta(minutes=40)
+        db.commit()
+    manager.emptied_at[sid] = left
+    live = [s["id"] for s in client.get("/admin/sessions?live_only=true", headers=admin).json()["items"]]
+    assert sid not in live
+    ended = client.get(f"/classes/{sid}", headers=admin).json()
+    assert ended["status"] == "completed"
+    assert ended["ended_at"].startswith(left.strftime("%Y-%m-%dT%H:%M"))
+
+
+def test_cors_allows_deployed_web_app_and_localhost_only(client):
+    def allowed(origin):
+        r = client.options("/auth/login", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
+        return r.headers.get("access-control-allow-origin") == origin
+
+    assert allowed("https://smartclass.example.edu")
+    assert allowed("https://admin.example.edu")  # trailing slash in the setting is ignored
+    assert allowed("http://localhost:8080")
+    assert not allowed("https://evil.example.com")

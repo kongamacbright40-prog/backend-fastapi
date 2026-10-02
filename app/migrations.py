@@ -1,9 +1,9 @@
-"""Tiny schema upgrader for databases created before new columns existed.
+"""Schema helpers.
 
-The app uses ``Base.metadata.create_all`` (no Alembic), which creates missing
-tables but never adds columns to existing ones. ``add_missing_columns`` adds
-any model column that is missing from an existing table, so an old
-``dev.db`` keeps working after an upgrade. Only additive changes are handled.
+PostgreSQL databases are managed with Alembic (``alembic upgrade head``,
+migrations in ``alembic/versions``). For SQLite (tests and quick local runs)
+the app creates tables with ``create_all`` and ``add_missing_columns`` adds
+model columns missing from an existing table (additive changes only).
 """
 
 from sqlalchemy import inspect, text
@@ -30,6 +30,32 @@ def _column_ddl(engine: Engine, column) -> str:
         if not column.nullable:
             ddl += " NOT NULL"
     return ddl
+
+
+def warn_if_not_migrated(engine: Engine) -> None:
+    """Logs a warning when the database is not at the newest Alembic revision
+    (run `alembic upgrade head`)."""
+    import logging
+    from pathlib import Path
+
+    from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    logger = logging.getLogger("smart_class")
+    try:
+        root = Path(__file__).resolve().parent.parent
+        script = ScriptDirectory.from_config(Config(str(root / "alembic.ini")))
+        with engine.connect() as conn:
+            current = set(MigrationContext.configure(conn).get_current_heads())
+        if current != set(script.get_heads()):
+            logger.warning(
+                "Database schema is not up to date (at %s, newest is %s). Run: alembic upgrade head",
+                ", ".join(sorted(current)) or "nothing",
+                ", ".join(script.get_heads()),
+            )
+    except Exception as e:  # never block startup because of this check
+        logger.warning("Could not check database migrations: %s", e)
 
 
 def add_missing_columns(engine: Engine) -> list[str]:

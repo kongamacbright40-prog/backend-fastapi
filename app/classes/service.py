@@ -12,12 +12,41 @@ from app.signaling.connection_manager import manager
 DEFAULT_CLASS_LENGTH = timedelta(hours=2)
 # How long past its expected end a class may stay open before it is closed.
 STALE_GRACE = timedelta(hours=1)
+# A live class everyone has left (e.g. the lecturer closed the tab without
+# tapping "End class") is ended after this long.
+ABANDONED_AFTER = timedelta(minutes=15)
+
+
+def _last_left(db: Session, session_id: int):
+    """When the last person left the class, or None if unknown / someone is
+    still in it. Uses the live room first, then attendance records (after a
+    server restart the room is gone)."""
+    from sqlalchemy import func
+
+    from app.attendance.models import AttendanceRecord
+
+    if session_id in manager.emptied_at:
+        return manager.emptied_at[session_id]
+    still_in, last = (
+        db.query(
+            func.count(AttendanceRecord.id).filter(AttendanceRecord.left_at.is_(None)),
+            func.max(AttendanceRecord.left_at),
+        )
+        .filter(AttendanceRecord.session_id == session_id, AttendanceRecord.joined_at.isnot(None))
+        .one()
+    )
+    return last if still_in == 0 else None
 
 
 def close_stale_sessions(db: Session) -> int:
-    """Ends classes left running long after their expected end (e.g. the
-    lecturer closed the app without tapping "End class"), so they stop being
-    reported as live. Classes with someone still connected are left alone."""
+    """Ends live classes nobody will end any more, so they stop being reported
+    as live:
+
+    * everyone left more than ABANDONED_AFTER ago (ended when the last left);
+    * or long after their expected end (duration, or DEFAULT_CLASS_LENGTH, plus
+      STALE_GRACE).
+
+    Classes with someone still connected are left alone."""
     from app.participation.models import Question
 
     now = datetime.utcnow()
@@ -28,13 +57,20 @@ def close_stale_sessions(db: Session) -> int:
     )
     closed = 0
     for session in live:
+        if manager.peers(session.id):
+            continue
+        last_left = _last_left(db, session.id)
         length = (
             timedelta(minutes=session.duration_minutes) if session.duration_minutes else DEFAULT_CLASS_LENGTH
         )
         expected_end = session.started_at + length
-        if now < expected_end + STALE_GRACE or manager.peers(session.id):
+        if last_left is not None and now - last_left >= ABANDONED_AFTER:
+            session.ended_at = max(last_left, session.started_at)
+        elif now >= expected_end + STALE_GRACE:
+            session.ended_at = expected_end
+        else:
             continue
-        session.ended_at = expected_end
+        manager.emptied_at.pop(session.id, None)
         db.query(Question).filter(
             Question.session_id == session.id, Question.is_open == True  # noqa: E712
         ).update({"is_open": False})

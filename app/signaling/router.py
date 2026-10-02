@@ -124,7 +124,7 @@ async def signal(websocket: WebSocket, class_id: int, token: str = Query(...)):
     existing = [p for p in manager.peers(class_id) if p != peer_id]
     await manager.send_to(class_id, peer_id, {"type": "room_state", "peers": existing})
     board = manager.boards.get(class_id)
-    if board is not None and (board.active or board.strokes):
+    if board is not None and (board.active or board.strokes or board.screen_on):
         await manager.send_to(class_id, peer_id, board.state())
     await manager.broadcast(
         class_id,

@@ -17,14 +17,19 @@ class Whiteboard:
     def __init__(self) -> None:
         self.active = False
         self.strokes: list[dict] = []
+        # Lecturer is sharing their screen (students show the shared screen).
+        self.screen_on = False
 
     def state(self) -> dict:
-        return {"type": "board_state", "active": self.active, "strokes": self.strokes}
+        return {"type": "board_state", "active": self.active, "strokes": self.strokes, "screen_on": self.screen_on}
 
     def apply(self, data: dict) -> Optional[dict]:
         """Applies one operation; returns the cleaned message to broadcast,
         or None when it is malformed."""
         op = data.get("op")
+        if op == "screen":
+            self.screen_on = data.get("on") is True
+            return {"type": "board", "op": "screen", "on": self.screen_on}
         if op in ("show", "hide"):
             self.active = op == "show"
             return {"type": "board", "op": op}
