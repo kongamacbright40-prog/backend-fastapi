@@ -611,3 +611,53 @@ def test_cors_allows_deployed_web_app_and_localhost_only(client):
     assert allowed("https://admin.example.edu")  # trailing slash in the setting is ignored
     assert allowed("http://localhost:8080")
     assert not allowed("https://evil.example.com")
+
+
+def test_ice_servers_include_configured_turn_relay(client, world, monkeypatch):
+    from app.config import settings
+    from app.signaling import ice
+
+    student = world["student"]
+    assert client.get("/signaling/ice-servers").status_code in (401, 403)
+
+    monkeypatch.setattr(settings, "turn_urls", "")
+    monkeypatch.setattr(settings, "metered_domain", "")
+    monkeypatch.setattr(settings, "cloudflare_turn_key_id", "")
+    body = client.get("/signaling/ice-servers", headers=student).json()
+    assert body["turn_configured"] is False
+    assert body["ice_servers"][0]["urls"][0].startswith("stun:")
+
+    monkeypatch.setattr(settings, "turn_urls", "turn:relay.example.com:3478, turns:relay.example.com:5349")
+    monkeypatch.setattr(settings, "turn_username", "u1")
+    monkeypatch.setattr(settings, "turn_credential", "p1")
+    body = client.get("/signaling/ice-servers", headers=student).json()
+    assert body["turn_configured"] is True
+    assert {"urls": ["turn:relay.example.com:3478", "turns:relay.example.com:5349"],
+            "username": "u1", "credential": "p1"} in body["ice_servers"]
+
+    # Provider credentials (Metered) are fetched once and cached; a provider
+    # outage never breaks the endpoint.
+    calls = []
+
+    def fake_fetch(url, **kwargs):
+        calls.append(url)
+        return [{"urls": "stun:stun.relay.metered.ca:80"},
+                {"urls": "turn:global.relay.metered.ca:80", "username": "m", "credential": "c"}]
+
+    monkeypatch.setattr(settings, "turn_urls", "")
+    monkeypatch.setattr(settings, "metered_domain", "demo.metered.live")
+    monkeypatch.setattr(settings, "metered_api_key", "k")
+    monkeypatch.setattr(ice, "_http_json", fake_fetch)
+    ice.reset_cache()
+    for _ in range(2):
+        servers = client.get("/signaling/ice-servers", headers=student).json()["ice_servers"]
+        assert {"urls": "turn:global.relay.metered.ca:80", "username": "m", "credential": "c"} in servers
+    assert len(calls) == 1 and "apiKey=k" in calls[0]
+
+    def failing_fetch(url, **kwargs):
+        raise OSError("network down")
+
+    monkeypatch.setattr(ice, "_http_json", failing_fetch)
+    ice.reset_cache()
+    assert client.get("/signaling/ice-servers", headers=student).status_code == 200
+    ice.reset_cache()

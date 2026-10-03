@@ -100,6 +100,28 @@ python -m pytest
   the last person left; any class still open long after its planned end
   (duration, or 2 h, plus 1 h) is closed too.
 
+### Audio/video across networks (TURN relay) — required in production
+
+Live-class audio and video go directly between devices (WebRTC). On the same
+Wi-Fi that just works, but once deployed, users are on different networks
+(mobile data, home and campus Wi-Fi) and most of those block direct
+connections: everyone joins the class, but **nobody can see or hear each
+other**. A TURN relay forwards the media in that case. Configure one on the
+server (no app rebuild needed — the app asks `GET /signaling/ice-servers`):
+
+1. **Metered.ca (free plan):** sign up at <https://www.metered.ca/stun-turn>,
+   open *Dashboard → TURN Server*, create a credential and copy its API key.
+   Set `METERED_DOMAIN=<yourapp>.metered.live` and `METERED_API_KEY=<key>`.
+2. **Cloudflare Realtime TURN:** create a TURN key, then set
+   `CLOUDFLARE_TURN_KEY_ID` and `CLOUDFLARE_TURN_API_TOKEN`.
+3. **Any TURN server** (e.g. your own coturn): `TURN_URLS`, `TURN_USERNAME`,
+   `TURN_CREDENTIAL`.
+
+Restart the server, then check (with a logged-in token) that
+`GET /signaling/ice-servers` returns `"turn_configured": true`. The server
+logs a warning at start-up while no relay is configured, and the app shows a
+banner when audio/video with a participant cannot connect.
+
 ## First setup
 
 1. Register the first admin from the app (Admin login → **Register as admin**)

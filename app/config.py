@@ -30,6 +30,25 @@ class Settings(BaseSettings):
     # Also allow http://localhost:* / 127.0.0.1:* (local web development).
     cors_allow_localhost: bool = True
 
+    # --- WebRTC network relay (TURN) for live classes -----------------------
+    # Without a TURN server, audio/video only connects when both sides can
+    # reach each other directly (same Wi-Fi, friendly routers). Over mobile
+    # data or strict networks it fails. Configure ONE of the options below.
+    # a) Your own / any TURN server: comma-separated URLs, e.g.
+    #    turn:turn.example.com:3478,turns:turn.example.com:5349?transport=tcp
+    turn_urls: str = ""
+    turn_username: str = ""
+    turn_credential: str = ""
+    # b) Metered.ca (free plan available): app domain + API key of a credential,
+    #    e.g. METERED_DOMAIN=myapp.metered.live
+    metered_domain: str = ""
+    metered_api_key: str = ""
+    # c) Cloudflare Realtime TURN: TURN key id + its API token.
+    cloudflare_turn_key_id: str = ""
+    cloudflare_turn_api_token: str = ""
+    # STUN servers (free, no relay), comma separated.
+    stun_urls: str = "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302"
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]

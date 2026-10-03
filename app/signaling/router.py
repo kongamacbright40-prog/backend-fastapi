@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from jose import jwt, JWTError
 
 from app.config import settings
@@ -8,13 +8,21 @@ from app.database import SessionLocal
 from app.auth.models import Profile, Role
 from app.campus.service import get_settings
 from app.classes.models import ClassSession
+from app.common.deps import get_current_user
 from app.courses.service import is_enrolled
 from app.attendance.models import AttendanceRecord, AttendanceStatus
+from app.signaling import ice
 from app.signaling.connection_manager import manager
 
 router = APIRouter(tags=["signaling"])
 
 RELAYED_TYPES = {"offer", "answer", "ice_candidate"}
+
+
+@router.get("/signaling/ice-servers")
+def get_ice_servers(_: Profile = Depends(get_current_user)):
+    """STUN/TURN servers the app uses for live-class audio and video."""
+    return {"ice_servers": ice.ice_servers(), "turn_configured": ice.turn_configured()}
 
 
 def authorize_join(token: str, class_id: int):

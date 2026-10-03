@@ -48,6 +48,14 @@ def _warm_up() -> None:
 
 _warm_up()
 
+if not is_sqlite:
+    from app.signaling.ice import turn_configured
+
+    if not turn_configured():
+        logger.warning(
+            "No TURN server configured (TURN_URLS / METERED_* / CLOUDFLARE_TURN_*): live-class "
+            "audio and video will fail between users on different networks."
+        )
 app = FastAPI(title="Smart Virtual Classroom API")
 
 # Compress larger JSON replies (lists, reports): less data over Wi-Fi / mobile.
